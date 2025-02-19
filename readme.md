@@ -57,7 +57,7 @@ The data, procedures, and results of this repository are outlined in three table
 - Results: [results/results_index.csv](results/results_index.csv)
 
 Important local **documents** include:
-- Pre-analysis plan: [docs/report/preanalysis.pdf](docs/report/preanalysis.pdf)
+- Pre-analysis plan: [docs/Gerrymander_Analysis.html](https://josephholler.github.io/OR-Gerrymander-Alabama/Gerrymander_Analysis.html)
 - Study report: [docs/report/report.pdf](docs/report/report.pdf)
 - Manuscript: [docs/manuscript/manuscript.pdf](docs/manuscript/manuscript.pdf)
 - Presentation: [docs/presentation/presentation.pdf](docs/presentation/presentation.pdf)
