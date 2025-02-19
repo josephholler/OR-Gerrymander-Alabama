@@ -8,6 +8,8 @@ editor_options:
     wrap: sentence
 knit: (function(inputFile, encoding) {
   rmarkdown::render(inputFile, encoding = encoding, output_dir = "../../docs") })
+nocite: '@*'
+bibliography: "../../software.bib"
 ---
 
 # Abstract
