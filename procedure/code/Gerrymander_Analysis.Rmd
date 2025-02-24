@@ -346,6 +346,7 @@ districts21_results <- districts21_join_ch |>
   mutate(
     darea = st_area(geom),
     dperim = st_length(st_cast(geom, "MULTILINESTRING")),
+    dperim2 = st_perimeter(geom),
     compact_shp = round( as.numeric((4 * pi * darea) / dperim^2), 2),
     compact_hull = round( as.numeric(darea / st_area(st_convex_hull(geom))), 2),
     compact_circ = round( as.numeric(darea / st_area(st_minimum_bounding_circle(geom))), 2)
