@@ -49,7 +49,6 @@ I plan on using package ... for ...
 packages <- c("tidyverse",
               "here",
               "sf",
-              "lwgeom",
               "tmap",
               "tidycensus",
               "knitr", 
@@ -207,10 +206,8 @@ blockgroups_calc <- blockgroups |>
   mutate(Total = P3_001N,
          PctBlack = Black / Total * 100,
          CheckPct = (Black + P3_003N) / Total * 100) |> 
-  select(GEOID, Black, Total, PctBlack, CheckPct) |> 
-  mutate(bgarea = st_area(geom))
+  select(GEOID, Black, Total, PctBlack, CheckPct)
 ```
-
 Save the results as blockgroups_calc.gpkg
 
 ```{r eval=FALSE}
@@ -218,37 +215,18 @@ st_write(blockgroups_calc,
          here("data", "derived", "public", "blockgroups_calc.gpkg"),
          append=FALSE)
 ```
-
 Map the percentage of the population 18 or over that is Black or African American.
 
 ```{r}
-blkgrp_black <- blockgroups_calc |> 
-  tm_shape() + 
+tm_shape(blockgroups_calc) + 
   tm_polygons(
     fill = "PctBlack",
     col_alpha = 0.2,
     lwd = 0.1,
     col = "grey90"
   )
-
-blkgrp_black
 ```
 
-### Load districts
-
-What layers are stored in `districts.gpkg`?
-
-```{r error=FALSE}
-districts_file <- here("data", "raw", "public", "districts.gpkg")
-st_layers(districts_file)
-```
-
-
-Load the disticts21 layer
-
-```{r}
-districts21 <- st_read(districts_file, layer = "districts21")
-```
 
 Notice that the coordinate reference system was WGS 1984, but should be NAD 1983 to match the study CRS.
 Transform the CRS.
@@ -398,6 +376,12 @@ tm_shape(districts21_results) +
   tm_polygons(fill = "pctBlackbg") +
   tm_text("DISTRICT")
 ```
+
+
+
+
+
+
 
 
 ## Analysis
