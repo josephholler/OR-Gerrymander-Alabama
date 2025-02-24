@@ -49,6 +49,7 @@ I plan on using package ... for ...
 packages <- c("tidyverse",
               "here",
               "sf",
+              "lwgeom",
               "tmap",
               "tidycensus",
               "knitr", 
@@ -93,7 +94,7 @@ knitr::write_bib(c(packages, "base"), file = here("software.bib"))
 # set up default knitr parameters
 # https://yihui.org/knitr/options/
 knitr::opts_chunk$set(
-  echo = FALSE, # Run code, show outputs (don't show code)
+  echo = TRUE, # Run code, show outputs (don't show code)
   fig.retina = 4,
   fig.width = 8,
   fig.path = paste0(here("results", "figures"), "/")
@@ -103,6 +104,42 @@ knitr::opts_chunk$set(
 ## Data and variables
 
 WE plan on using data sources .... , ... ....
+
+Several data layers are compiled and provided in the `districts` geopackage.
+
+```{r}
+districts_file <- here("data", "raw", "public", "districts.gpkg")
+st_layers(districts_file)
+```
+
+### Districts 2021
+
+The congressional districts enacted in 2021 were used in the 2022 mid-term elections, and then deemed unconstitutional gerrymanders by the Supreme Court.
+
+Load the districts.
+
+```{r}
+districts21 <- st_read(districts_file, layer="districts21")
+```
+
+Map the districts
+
+```{r}
+tmap_mode(mode = "plot")
+districts21map <- districts21 |> 
+  tm_shape() +
+  tm_polygons(fill_alpha = 0,
+              col = "red") +
+  tm_labels(text = "DISTRICT",
+          col="red",
+          bgcol = "white",
+          bgcol_alpha = 0.5,
+          on_surface = TRUE,
+          just = c("center", "center")
+          )
+
+districts21map
+```
 
 ### Precincts 2020
 
@@ -165,22 +202,25 @@ We hope that in part, this study establishes a method that is more robust (less 
 
 ## Data transformations
 
-Describe all data transformations planned to prepare data sources for analysis.
-This section should explain with the fullest detail possible how to transform data from the **raw** state at the time of acquisition or observation, to the pre-processed **derived** state ready for the main analysis.
-Including steps to check and mitigate sources of **bias** and **threats to validity**.
-The method may anticipate **contingencies**, e.g. tests for normality and alternative decisions to make based on the results of the test.
-More specifically, all the **geographic** and **variable** transformations required to prepare input data as described in the data and variables section above to match the study's spatio-temporal characteristics as described in the study metadata and study design sections.
-Visual workflow diagrams may help communicate the methodology in this section.
+### Districts 2021
 
-Examples of **geographic** transformations include coordinate system transformations, aggregation, disaggregation, spatial interpolation, distance calculations, zonal statistics, etc.
+Transform Districts into NAD 1983 coordinate system, and calculate the percentage of population identifying as Black.
 
-Examples of **variable** transformations include standardization, normalization, constructed variables, imputation, classification, etc.
+```{r}
+districts21 <- districts21 |> st_transform(4269) |> 
+  mutate(pctBlack = round(BLACK / POPULATION * 100, 1))
+```
 
-Be sure to include any steps planned to **exclude** observations with *missing* or *outlier* data, to **group** observations by *attribute* or *geographic* criteria, or to **impute** missing data or apply spatial or temporal **interpolation**.
 
-### Calculate Census Variables
+### Block groups census data
 
-Sum the total of people identifying as Black or African American as one race or any combination of multiple races.
+Census data needs to be transformed from the WGS 1984 geographic coordinate system to the NAD 1983 geographic coordinate system.
+
+```{r}
+blockgroups <- st_transform(blockgroups, 4269)
+```
+
+Find the total of people identifying as Black or African American as one race or any combination of multiple races.
 First, make a list of all the variables inclusive of people identifying as Black or African American.
 
 ```{r}
@@ -198,59 +238,50 @@ Next, calculate new columns.
 `PctBlack` is calculated as `Black / Total * 100`  
 `CheckPct` is calculated as the percentage of the population 18 years or older that is either white of one race only (`P3_003N`) *or* Black or African American as calculated above. In Alabama, we can expect that this will be close to 100% for most block groups, and should never exceed 100%.
 
-```{r, message=FALSE, warning=FALSE}
+```{r}
 blockgroups_calc <- blockgroups |> 
   rowwise() |> 
   mutate(Black = sum(c_across(all_of(black_vars$name)))) |> 
   ungroup() |> 
-  mutate(Total = P3_001N,
+  mutate(bgarea = st_area(geom),
+         Total = P3_001N,
          PctBlack = Black / Total * 100,
-         CheckPct = (Black + P3_003N) / Total * 100) |> 
-  select(GEOID, Black, Total, PctBlack, CheckPct)
+         CheckPct = (Black + P3_003N) / Total * 100
+         ) |> 
+  select(GEOID, bgarea, Black, Total, PctBlack, CheckPct)
 ```
-Save the results as blockgroups_calc.gpkg
+
+Save the results as `blockgroups_calc.gpkg`
 
 ```{r eval=FALSE}
 st_write(blockgroups_calc, 
          here("data", "derived", "public", "blockgroups_calc.gpkg"),
          append=FALSE)
 ```
+
 Map the percentage of the population 18 or over that is Black or African American.
 
-```{r}
-tm_shape(blockgroups_calc) + 
+```{r message=FALSE}
+tmap_mode(mode = "plot")
+blkgrp_black_map <- tm_shape(blockgroups_calc) + 
   tm_polygons(
     fill = "PctBlack",
     col_alpha = 0.2,
     lwd = 0.1,
     col = "grey90"
   )
+
+blkgrp_black_map
 ```
+Make an interactive map of the 2021 districts over the black population 
 
-
-Notice that the coordinate reference system was WGS 1984, but should be NAD 1983 to match the study CRS.
-Transform the CRS.
-Also, calculate the percentage of the population that is Black
-
-```{r}
-districts21 <- districts21 |> st_transform(4269) |> 
-  mutate(pctBlack = round(BLACK / POPULATION * 100, 1))
-```
-
-Map the districts over the black population
-
-```{r}
+```{r warning=FALSE}
 tmap_mode(mode = "view")
-blkgrp_black +
-  tm_shape(districts21) +
-  tm_polygons(col = "red",
-              fill_alpha = 0,
-              lwd = 2) +
-  tm_text("DISTRICT",
-          col = "red")
+blkgrp_black_map +
+  districts21map
 ```
 
-
+## Analysis
 
 Estimate the white and black voting age populations using AWR with block groups.
 Why do this when POPULATION, BLACK, and WHITE variables are already in the table?
@@ -324,12 +355,37 @@ districts21_results <- districts21_join_ch |>
   mutate(
     darea = st_area(geom),
     dperim = st_length(st_cast(geom, "MULTILINESTRING")),
-    dperim2 = st_perimeter(geom),
+#    dperim2 = st_perimeter(geom),
     compact_shp = round( as.numeric((4 * pi * darea) / dperim^2), 2),
     compact_hull = round( as.numeric(darea / st_area(st_convex_hull(geom))), 2),
     compact_circ = round( as.numeric(darea / st_area(st_minimum_bounding_circle(geom))), 2)
   )
 ```
+
+
+
+
+# Results
+
+### Correlation matrix and small plots for gerrymandering indicators
+
+```{r}
+districts21_results_cor <- districts21_results |> 
+  st_drop_geometry() |> 
+  select(pctBlackbg,
+         diffPct,
+         absdiffPct,
+         compact_shp,
+         compact_hull,
+         compact_circ)
+
+districts21_results_cor |> cor() |> kable()
+```
+
+```{r}
+districts21_results_cor |> pairs()
+```
+
 
 
 ### Plot representational difference against compactness
@@ -377,22 +433,6 @@ tm_shape(districts21_results) +
   tm_text("DISTRICT")
 ```
 
-
-
-
-
-
-
-
-## Analysis
-
-Describe the methods of analysis that will directly test the hypotheses or provide results to answer the research questions.
-This section should explicitly define any spatial / statistical *models* and their *parameters*, including *grouping* criteria, *weighting* criteria, and *significance thresholds*.
-Also explain any follow-up analyses or validations.
-
-# Results
-
-Describe how results are to be presented.
 
 # Discussion
 
