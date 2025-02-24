@@ -228,6 +228,160 @@ tm_shape(blockgroups_calc) +
 ```
 
 
+Notice that the coordinate reference system was WGS 1984, but should be NAD 1983 to match the study CRS.
+Transform the CRS.
+Also, calculate the percentage of the population that is Black
+
+```{r}
+districts21 <- districts21 |> st_transform(4269) |> 
+  mutate(pctBlack = round(BLACK / POPULATION * 100, 1))
+```
+
+Map the districts over the black population
+
+```{r}
+tmap_mode(mode = "view")
+blkgrp_black +
+  tm_shape(districts21) +
+  tm_polygons(col = "red",
+              fill_alpha = 0,
+              lwd = 2) +
+  tm_text("DISTRICT",
+          col = "red")
+```
+
+
+
+Estimate the white and black voting age populations using AWR with block groups.
+Why do this when POPULATION, BLACK, and WHITE variables are already in the table?
+First, this is the total population, but we should care more about the voting age population.
+Second, we may want to categorize and calculate `BLACK` differently from the state of Alabama.
+
+It turns out that R optimizes the *first* dataset in a spatial query or overlay, with a spatial index, and not the second.
+Therefore, add the more complex data to `st_intersection` first, and you'll see remarkably different run times.
+
+Spatial indices in R: https://r-spatial.org/r/2017/06/22/spatial-index.html
+
+```{r warning=FALSE}
+districts21_estimates <- st_intersection(blockgroups_calc, districts21) |> 
+  mutate(
+    awTot = Total * as.numeric(st_area(geom) / bgarea),
+    awBlack = Black * as.numeric(st_area(geom) / bgarea)
+  ) |> 
+  st_drop_geometry() |> 
+  group_by(DISTRICT) |> 
+  summarize(bgTotal = sum(awTot),
+            bgBlack = sum(awBlack))
+
+districts21_join_bg <- districts21 |> 
+  left_join(districts21_estimates, by = "DISTRICT") |> 
+  mutate(pctBlackbg = round(bgBlack / bgTotal * 100, 1))
+```
+
+Report results.
+We find very similar percentages of Black or African American people.
+
+```{r}
+districts21_join_bg |> st_drop_geometry() |> kable()
+```
+
+
+```{r warning=FALSE}
+districts21_estimates <- st_intersection(blockgroups_calc, st_convex_hull(districts21)) |> 
+  mutate(
+    awTot = Total * as.numeric(st_area(geom) / bgarea),
+    awBlack = Black * as.numeric(st_area(geom) / bgarea)
+  ) |> 
+  st_drop_geometry() |> 
+  group_by(DISTRICT) |> 
+  summarize(chTotal = sum(awTot),
+            chBlack = sum(awBlack))
+```
+
+Join convex hull estimates to Districts with blockgroup estimates.
+
+```{r}
+districts21_join_ch <- districts21_join_bg |> 
+  left_join(districts21_estimates, by = "DISTRICT") |> 
+  mutate(pctBlackch = round(chBlack / chTotal * 100, 1),
+         diffPct = pctBlackbg - pctBlackch,
+         absdiffPct = abs(diffPct))
+```
+
+Calculate compactness scores based on:
+
+- the area and perimeter
+- the area and the area of the convex hull
+- the area and the area of the minimum bounding circle
+
+This block takes some time to run due to the `st_minimum_bounding_circle` function.
+
+Note: 
+To knit, will we need to replace `st_perimeter()` with `st_length(st_cast(geom, "MULTILINESTRING"))`?
+
+```{r}
+districts21_results <- districts21_join_ch |> 
+  mutate(
+    darea = st_area(geom),
+    dperim = st_length(st_cast(geom, "MULTILINESTRING")),
+    dperim2 = st_perimeter(geom),
+    compact_shp = round( as.numeric((4 * pi * darea) / dperim^2), 2),
+    compact_hull = round( as.numeric(darea / st_area(st_convex_hull(geom))), 2),
+    compact_circ = round( as.numeric(darea / st_area(st_minimum_bounding_circle(geom))), 2)
+  )
+```
+
+
+### Plot representational difference against compactness
+
+Scatterplot with (absolute) difference in representation on x axis and compactness on y axis.
+Plot the three different compactness scores simultaneously with different colors.
+Symbolize the districts with different shapes.
+
+```{r}
+districts21_results_plot <- districts21_results |> 
+  st_drop_geometry() |> 
+  select(DISTRICT, pctBlack, absdiffPct, compact_shp, compact_hull, compact_circ) |> 
+  pivot_longer(cols = starts_with("compact"))
+
+districts21_results_plot |> ggplot() +
+  aes(x = absdiffPct, y = value) +
+  geom_smooth(method="lm", col = "grey30") +
+  geom_label(aes(label = DISTRICT, fill = pctBlack)) +
+  scale_fill_distiller(type = "div", palette = "PRGn") +
+
+  facet_wrap(~name)
+```
+
+
+
+There is a negative relationship between convex hull compactness and convex hull difference.
+There is a negative relationship between convex hull compactness and convex hull difference.
+There is a negative relationship between minimum bounding circle compactness and convex hull representational difference.  
+The exceptions are districts 5 and 7. 
+District 7 really is gerrymandered (packed African American), but the minimum bounding circle method does not find it so.
+District 5 is not really gerrymandered, even though the minimum bounding circle does find it so.
+
+
+
+
+Shape and convex hull exhibit a positive correlation.  
+Shape and minimum bounding circle exhibit a positive correlation, with the exception of District 5.
+Convex hull and minimum bounding circle exhibit a positive correlation, with the exception of District 5.
+
+District 5 is a long, but otherwise compact shape.
+
+```{r}
+tm_shape(districts21_results) +
+  tm_polygons(fill = "pctBlackbg") +
+  tm_text("DISTRICT")
+```
+
+
+
+
+
+
 
 
 ## Analysis
