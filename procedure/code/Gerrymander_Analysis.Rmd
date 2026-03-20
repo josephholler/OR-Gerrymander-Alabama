@@ -54,7 +54,8 @@ packages <- c("tidyverse",
               "tidycensus",
               "knitr", 
               "htmltools",
-              "markdown")
+              "markdown",
+              "corrplot")
 
 # force all conflicts to become errors
 # if you load dplyr and use filter(), R has to guess whether you mean dplyr::filter() or stats::filter()
@@ -310,33 +311,73 @@ districts21_join_bg <- districts21 |>
 ```
 
 Report results.
-We find very similar percentages of Black or African American people.
+We find very similar percentages of Black or African American people using 
+areal interpolation with block group data.
 
 ```{r}
 districts21_join_bg |> st_drop_geometry() |> kable()
 ```
 
-
 ```{r warning=FALSE}
-districts21_estimates <- st_intersection(blockgroups_calc, st_convex_hull(districts21)) |> 
+d_ch <- districts21 |> 
+  st_convex_hull() |> 
+  mutate(chArea = st_area(geom))
+  
+d_ch_est <- blockgroups_calc |> 
+  st_intersection(d_ch) |> 
   mutate(
-    awTot = Total * as.numeric(st_area(geom) / bgarea),
-    awBlack = Black * as.numeric(st_area(geom) / bgarea)
+    fArea = st_area(geom),
+    awTot = Total * as.numeric(fArea / bgarea),
+    awBlack = Black * as.numeric(fArea / bgarea),
   ) |> 
   st_drop_geometry() |> 
-  group_by(DISTRICT) |> 
+  group_by(DISTRICT, chArea) |> 
   summarize(chTotal = sum(awTot),
             chBlack = sum(awBlack))
+
+# ch is for "convex Hull"
 ```
 
-Join convex hull estimates to Districts with blockgroup estimates.
+
+```{r warning=FALSE}
+d_mbc <- districts21 |> 
+  lwgeom::st_minimum_bounding_circle() |> 
+  mutate(mbcArea = st_area(geom))
+  
+d_mbc_est <- blockgroups_calc |> 
+  st_intersection(d_mbc) |> 
+  mutate(
+    fArea = st_area(geom),
+    awTot = Total * as.numeric(fArea / bgarea),
+    awBlack = Black * as.numeric(fArea / bgarea),
+  ) |> 
+  st_drop_geometry() |> 
+  group_by(DISTRICT, mbcArea) |> 
+  summarize(mbcTotal = sum(awTot),
+            mbcBlack = sum(awBlack))
+
+# ch is for "convex Hull"
+```
+
+```{r eval=FALSE}
+d_ch |> st_write(here("data", "derived", "public", "convex_hull.gpkg"),
+                 append = FALSE)
+d_mbc |> st_write(here("data", "derived", "public", "minimum_bounding_circle.gpkg"),
+                  append = FALSE)
+```
+
+Join convex hull estimates to Districts with block group estimates.
 
 ```{r}
 districts21_join_ch <- districts21_join_bg |> 
-  left_join(districts21_estimates, by = "DISTRICT") |> 
-  mutate(pctBlackch = round(chBlack / chTotal * 100, 1),
-         diffPct = pctBlackbg - pctBlackch,
-         absdiffPct = abs(diffPct))
+  left_join(d_ch_est, by = "DISTRICT") |> 
+  mutate(chPct = round(chBlack / chTotal * 100, 1),
+         chDiff = pctBlackbg - chPct,
+         chAbsDiff = abs(chDiff)) |> 
+  left_join(d_mbc_est, by = "DISTRICT") |> 
+  mutate(mbcPct = round(mbcBlack / mbcTotal * 100, 1),
+         mbcDiff = pctBlackbg - mbcPct,
+         mbcAbsDiff = abs(mbcDiff)) 
 ```
 
 Calculate compactness scores based on:
@@ -344,8 +385,6 @@ Calculate compactness scores based on:
 - the area and perimeter
 - the area and the area of the convex hull
 - the area and the area of the minimum bounding circle
-
-This block takes some time to run due to the `st_minimum_bounding_circle` function.
 
 Note: 
 To knit, will we need to replace `st_perimeter()` with `st_length(st_cast(geom, "MULTILINESTRING"))`?
@@ -355,15 +394,13 @@ districts21_results <- districts21_join_ch |>
   mutate(
     darea = st_area(geom),
     dperim = st_length(st_cast(geom, "MULTILINESTRING")),
-#    dperim2 = st_perimeter(geom),
     compact_shp = round( as.numeric((4 * pi * darea) / dperim^2), 2),
-    compact_hull = round( as.numeric(darea / st_area(st_convex_hull(geom))), 2),
-    compact_circ = round( as.numeric(darea / st_area(st_minimum_bounding_circle(geom))), 2)
+    compact_hull = round( as.numeric(darea / chArea), 2),
+    compact_circ = round( as.numeric(darea / mbcArea), 2)
   )
 ```
 
-
-
+# mean_center function
 
 # Results
 
@@ -373,19 +410,25 @@ districts21_results <- districts21_join_ch |>
 districts21_results_cor <- districts21_results |> 
   st_drop_geometry() |> 
   select(pctBlackbg,
-         diffPct,
-         absdiffPct,
+      #   chPct,
+         chAbsDiff,
+      #   mbcPct,
+         mbcAbsDiff,
          compact_shp,
          compact_hull,
          compact_circ)
 
-districts21_results_cor |> cor() |> kable()
+districts21_results_cor |> cor() |> corrplot(type="upper", diag=FALSE) 
+
+#districts21_results_cor |> cor() |> kable()
 ```
 
-```{r}
-districts21_results_cor |> pairs()
-```
-
+Follow the first percent Black row across.
+While it is most correlated with the minimum bounding circle approach to compactness,
+there are also strong positive correlations with the degree of change in the Percentage of the population that is a minority between the district and its convex hull or its minimum bounding circle.
+In other words, if you change the shape of a district into a convex hull or minimum bounding circle,
+the composition of minority-majority districts changes more than the composition of majority-majority districts.
+Meanwhile, there is little correlation with how compact a shape is.
 
 
 ### Plot representational difference against compactness
@@ -397,11 +440,11 @@ Symbolize the districts with different shapes.
 ```{r}
 districts21_results_plot <- districts21_results |> 
   st_drop_geometry() |> 
-  select(DISTRICT, pctBlack, absdiffPct, compact_shp, compact_hull, compact_circ) |> 
+  select(DISTRICT, pctBlack, chAbsDiff, compact_shp, compact_hull, compact_circ) |> 
   pivot_longer(cols = starts_with("compact"))
 
 districts21_results_plot |> ggplot() +
-  aes(x = absdiffPct, y = value) +
+  aes(x = chAbsDiff, y = value) +
   geom_smooth(method="lm", col = "grey30") +
   geom_label(aes(label = DISTRICT, fill = pctBlack)) +
   scale_fill_distiller(type = "div", palette = "PRGn") +
@@ -417,9 +460,6 @@ There is a negative relationship between minimum bounding circle compactness and
 The exceptions are districts 5 and 7. 
 District 7 really is gerrymandered (packed African American), but the minimum bounding circle method does not find it so.
 District 5 is not really gerrymandered, even though the minimum bounding circle does find it so.
-
-
-
 
 Shape and convex hull exhibit a positive correlation.  
 Shape and minimum bounding circle exhibit a positive correlation, with the exception of District 5.
@@ -438,17 +478,8 @@ tm_shape(districts21_results) +
 
 Describe how the results are to be interpreted *vis a vis* each hypothesis or research question.
 
-# Integrity Statement
-
-Include an integrity statement - The authors of this preregistration state that they completed this preregistration to the best of their knowledge and that no other preregistration exists pertaining to the same hypotheses and research.
-If a prior registration *does* exist, explain the rationale for revising the registration here.
 
 # Acknowledgements
-
-- `Funding Name`: name of funding for the project
-- `Funding Title`: title of project grant
-- `Award info URI`: web address for award information
-- `Award number`: award number
 
 This report is based upon the template for Reproducible and Replicable Research in Human-Environment and Geographical Sciences, DOI: [10.17605/OSF.IO/W29MQ](https://doi.org/10.17605/OSF.IO/W29MQ)
 
